@@ -4,7 +4,11 @@ import random
 import struct
 import pickle
 import os
+import re
+import time
 from Crypto.Cipher import AES
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 
 ENCRYPTION_KEY = "PleaseChangeThis"
@@ -118,24 +122,52 @@ class Mist(object):
 
     DEFAULT_INDEX_FILENAME = "index"
 
-    def __init__(self, root_path):
+    def __init__(self, root_path, autostart=False):
         self.uid = uuid.uuid4()
         self.mist_network = None
         self.mist_network_member_uid = None
         self.root_path = root_path
         self.mist_files = {}
-        self._LoadMistFiles()
+        self.event_handler = None
+        self.observer = None
+
+        if autostart:
+            self.Start()
 
     @staticmethod
     def CreateIfDoesNotExist(root_path):
         if not os.path.exists(root_path):
             os.makedirs(root_path)
+        if not os.path.exists(os.path.join(root_path, MistFile.STORAGE_FOLDER_PATH)):
+            os.makedirs(os.path.join(root_path, MistFile.STORAGE_FOLDER_PATH))
         return Mist(root_path)
+
+    def Start(self, network=None):
+        self._LoadMistFiles()
+        self._StartWatchdogObserver()
+        if network:
+            self.JoinNetwork(network)
+
+    def Stop(self):
+        if self.observer:
+            self.observer.stop()
+            self.observer.join()
+        self._RewriteMistIndexFile()
+        if self.mist_network:
+            self.LeaveNetwork()
+
+    def _StartWatchdogObserver(self):
+        self.event_handler = MistWatchdogEventHandler(self)
+        self.observer = Observer()
+        self.observer.schedule(self.event_handler, self.root_path, recursive=True)
+        self.observer.start()
 
     def _LoadMistFiles(self):
         if os.path.isfile(os.path.join(self.root_path, Mist.DEFAULT_INDEX_FILENAME)):
             with open(os.path.join(self.root_path, Mist.DEFAULT_INDEX_FILENAME), "r") as infile:
                 self.mist_files = pickle.load(infile)
+        else:
+            self._RewriteMistIndexFile()
 
     def _RewriteMistIndexFile(self):
         with open(os.path.join(self.root_path, Mist.DEFAULT_INDEX_FILENAME), "wb") as outfile:
@@ -178,10 +210,87 @@ class Mist(object):
         self.mist_network_member_uid = network_member.uid
         self.mist_network.AddMember(network_member)
 
-    def LeaveNetwork(self, mist_network):
+    def LeaveNetwork(self):
         self.mist_network.DeleteMember(self.mist_network_member_uid)
         self.mist_network = None
         self.mist_network_member_uid = None
+
+
+class MistWatchdogEventHandler(FileSystemEventHandler):
+    """Mist hander which handles all the events captured."""
+
+    IGNORED_PATHS = [
+        ".*/.DS_Store",
+    ]
+
+    IGNORED_MIST_ROOT_PATHS = [
+        (MistFile.STORAGE_FOLDER_PATH, "folder"),
+        (Mist.DEFAULT_INDEX_FILENAME, "file"),
+    ]
+
+    def __init__(self, mist_parent, *args, **kwargs):
+        super(MistWatchdogEventHandler, self).__init__(*args, **kwargs)
+        self.mist_parent = mist_parent
+
+    def dispatch(self, event):
+        combined = "(" + ")|(".join(MistWatchdogEventHandler.IGNORED_PATHS) + ")"
+
+        for (path, path_type) in MistWatchdogEventHandler.IGNORED_MIST_ROOT_PATHS:
+            full_path = os.path.join(self.mist_parent.root_path, path)
+            if path_type == "folder":
+                if os.path.commonprefix([event.src_path, full_path]) == full_path:
+                    return
+            elif path_type == "file":
+                if event.src_path == full_path:
+                    return
+
+        if not re.match(combined, event.src_path):
+            super(MistWatchdogEventHandler, self).dispatch(event)
+
+    def on_moved(self, event):
+        super(MistWatchdogEventHandler, self).on_moved(event)
+
+        what = 'directory' if event.is_directory else 'file'
+        print "Moved %s: from %s to %s" % (what, event.src_path, event.dest_path)
+
+        if not event.is_directory:
+            self.mist_parent.DeleteFile(event.src_path)
+            self.mist_parent.AddFile(event.dest_path)
+
+        print "%s:" % self.mist_parent.root_path, self.mist_parent.List()
+
+    def on_created(self, event):
+        super(MistWatchdogEventHandler, self).on_created(event)
+
+        what = 'directory' if event.is_directory else 'file'
+        print "Created %s: %s" % (what, event.src_path)
+
+        if not event.is_directory:
+            self.mist_parent.AddFile(event.src_path)
+
+        print "%s:" % self.mist_parent.root_path, self.mist_parent.List()
+
+    def on_deleted(self, event):
+        super(MistWatchdogEventHandler, self).on_deleted(event)
+
+        what = 'directory' if event.is_directory else 'file'
+        print "Deleted %s: %s" % (what, event.src_path)
+
+        if not event.is_directory:
+            self.mist_parent.DeleteFile(event.src_path)
+
+        print "%s:" % self.mist_parent.root_path, self.mist_parent.List()
+
+    def on_modified(self, event):
+        super(MistWatchdogEventHandler, self).on_modified(event)
+
+        what = 'directory' if event.is_directory else 'file'
+        print "Modified %s: %s" % (what, event.src_path)
+
+        if not event.is_directory:
+            self.mist_parent.AddFile(event.src_path)
+
+        print "%s:" % self.mist_parent.root_path, self.mist_parent.List()
 
 
 class MistNetworkMember(object):
@@ -242,24 +351,32 @@ def main():
     network = MistNetwork()
     print "network:", network.ListMembers()
     m1 = Mist.CreateIfDoesNotExist("accounts/a")
-    m1.JoinNetwork(network)
     m2 = Mist.CreateIfDoesNotExist("accounts/b")
-    m2.JoinNetwork(network)
     m3 = Mist.CreateIfDoesNotExist("accounts/c")
-    m3.JoinNetwork(network)
-    print "network:", network.ListMembers()
-    print "a:", m1.List()
-    print "b:", m2.List()
-    print "c:", m3.List()
-    import pdb; pdb.set_trace()
-    print "a:", m1.List()
-    print "b:", m2.List()
-    print "c:", m3.List()
-    print "network:", network.ListMembers()
-    m1.LeaveNetwork(network)
-    m2.LeaveNetwork(network)
-    m3.LeaveNetwork(network)
-    print "network:", network.ListMembers()
+    try:
+        m1.Start(network)
+        m2.Start(network)
+        m3.Start(network)
+        print "network:", network.ListMembers()
+        print "a:", m1.List()
+        print "b:", m2.List()
+        print "c:", m3.List()
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print "a:", m1.List()
+            print "b:", m2.List()
+            print "c:", m3.List()
+            print "network:", network.ListMembers()
+            m1.Stop()
+            m2.Stop()
+            m3.Stop()
+            print "network:", network.ListMembers()
+    finally:
+        m1.Stop()
+        m2.Stop()
+        m3.Stop()
 
 
 if __name__ == "__main__":
