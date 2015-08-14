@@ -1,0 +1,6 @@
+PyYAML==3.11
+argh==0.26.1
+pathtools==0.1.2
+pycrypto==2.6.1
+watchdog==0.8.3
+wsgiref==0.1.2
