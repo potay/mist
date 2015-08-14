@@ -5,7 +5,6 @@ import struct
 import pickle
 import os
 import re
-import time
 from Crypto.Cipher import AES
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
