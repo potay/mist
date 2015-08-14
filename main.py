@@ -363,7 +363,31 @@ def main():
         print "c:", m3.List()
         try:
             while True:
-                time.sleep(1)
+                msg_string = "Which account do you want to use? (Enter account number):"
+                msg_string += "\n  1. a"
+                msg_string += "\n  2. b"
+                msg_string += "\n  3. c"
+                msg_string += "\n\nAccount Number: "
+                account_num = raw_input(msg_string)
+                if account_num == "1":
+                    account = m1
+                elif account_num == "2":
+                    account = m2
+                elif account_num == "3":
+                    account = m3
+                else:
+                    continue
+
+                command = raw_input("What do you want to do? (Enter the action number):\n  1.Read File\n  2.Export File\n\nAction Number: ")
+                if command == "1":
+                    file_path = raw_input("Which file? (e.g. accounts/a/filename.txt): ")
+                    print account.ReadFile(file_path)
+                elif command == "2":
+                    file_path = raw_input("Which file? (e.g. accounts/a/filename.txt): ")
+                    output_path = raw_input("Export path? (e.g. hello.txt): ")
+                    account.ExportFile(file_path, output_path)
+                print
+                print
         except KeyboardInterrupt:
             print "a:", m1.List()
             print "b:", m2.List()
