@@ -1,0 +1,6 @@
+*.pyc
+venv
+chunks/*
+testfiles/*
+
+!chunks/__init__.py
