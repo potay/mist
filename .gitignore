@@ -1,8 +1,5 @@
 *.pyc
 venv
-chunks/*
 testfiles/*
-index
-
-
-!chunks/__init__.py
+accounts/*
+network_state

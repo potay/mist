@@ -19,10 +19,11 @@ class MistChunk(object):
                    (8, "File size"),
                    (16, "Initialization Vector"))
 
-    def __init__(self, file_uid, folder_path, data):
+    def __init__(self, file_uid, folder_path, data, network_member):
         self.file_uid = file_uid
         self.uid = uuid.uuid4()
-        self.chunk_path = "%s/%s.mist" % (folder_path, self.uid)
+        self.network_member = network_member
+        self.chunk_path = "%s/%s/%s.mist" % (network_member.root_path, folder_path, self.uid)
         self._WriteToPath(data)
 
     def _WriteToPath(self, data):
@@ -74,8 +75,9 @@ class MistFile(object):
 
     STORAGE_FOLDER_PATH = "chunks"
 
-    def __init__(self, file_path):
+    def __init__(self, file_path, mist_network):
         self.uid = uuid.uuid4()
+        self.mist_network = mist_network
         self.filename = ntpath.basename(file_path)
         self.mist_chunks = []
         self._SplitFileIntoChunks(file_path)
@@ -84,7 +86,8 @@ class MistFile(object):
         with open(file_path, "r") as infile:
             data = infile.read(MistChunk.CHUNK_SIZE)
             while data:
-                mist_chunk = MistChunk(self.uid, MistFile.STORAGE_FOLDER_PATH, data)
+                chosen_member = self.mist_network.GetRandomMember()
+                mist_chunk = MistChunk(self.uid, MistFile.STORAGE_FOLDER_PATH, data, chosen_member)
                 self.mist_chunks.append(mist_chunk)
                 data = infile.read(MistChunk.CHUNK_SIZE)
 
@@ -102,6 +105,7 @@ class MistFile(object):
             chunk.Delete()
             del chunk
         self.uid = None
+        self.mist_network = None
         self.filename = None
         self.mist_chunks = None
 
@@ -114,14 +118,28 @@ class Mist(object):
 
     DEFAULT_INDEX_FILENAME = "index"
 
-    def __init__(self):
+    def __init__(self, root_path):
+        self.uid = uuid.uuid4()
+        self.mist_network = None
+        self.mist_network_member_uid = None
+        self.root_path = root_path
         self.mist_files = {}
         self._LoadMistFiles()
 
+    @staticmethod
+    def CreateIfDoesNotExist(root_path):
+        if not os.path.exists(root_path):
+            os.makedirs(root_path)
+        return Mist(root_path)
+
     def _LoadMistFiles(self):
-        if os.path.isfile(Mist.DEFAULT_INDEX_FILENAME):
-            with open(Mist.DEFAULT_INDEX_FILENAME, "r") as infile:
+        if os.path.isfile(os.path.join(self.root_path, Mist.DEFAULT_INDEX_FILENAME)):
+            with open(os.path.join(self.root_path, Mist.DEFAULT_INDEX_FILENAME), "r") as infile:
                 self.mist_files = pickle.load(infile)
+
+    def _RewriteMistIndexFile(self):
+        with open(os.path.join(self.root_path, Mist.DEFAULT_INDEX_FILENAME), "wb") as outfile:
+            pickle.dump(self.mist_files, outfile)
 
     def AddFile(self, file_path, overwrite=True):
         if file_path in self.mist_files:
@@ -131,9 +149,8 @@ class Mist(object):
                 print "File already exists. File path: %s" % file_path
                 return
 
-        self.mist_files[file_path] = MistFile(file_path)
-        with open(Mist.DEFAULT_INDEX_FILENAME, "wb") as outfile:
-            pickle.dump(self.mist_files, outfile)
+        self.mist_files[file_path] = MistFile(file_path, self.mist_network)
+        self._RewriteMistIndexFile()
 
     def ReadFile(self, file_path):
         if file_path in self.mist_files:
@@ -145,6 +162,7 @@ class Mist(object):
     def DeleteFile(self, file_path):
         self.mist_files[file_path].Delete()
         del self.mist_files[file_path]
+        self._RewriteMistIndexFile()
 
     def ExportFile(self, file_path, export_path):
         data = self.ReadFile(file_path)
@@ -153,6 +171,62 @@ class Mist(object):
 
     def List(self):
         return map(str, self.mist_files)
+
+    def JoinNetwork(self, mist_network):
+        self.mist_network = mist_network
+        network_member = MistNetworkMember(self.uid, self.root_path)
+        self.mist_network_member_uid = network_member.uid
+        self.mist_network.AddMember(network_member)
+
+    def LeaveNetwork(self, mist_network):
+        self.mist_network.DeleteMember(self.mist_network_member_uid)
+        self.mist_network = None
+        self.mist_network_member_uid = None
+
+
+class MistNetworkMember(object):
+    """Mist Network Member Class"""
+
+    def __init__(self, mist_uid, root_path):
+        self.uid = uuid.uuid4()
+        self.mist_uid = mist_uid
+        self.root_path = root_path
+
+    def __str__(self):
+        return "%s@%s" % (self.mist_uid, self.root_path)
+
+
+class MistNetwork(object):
+    """Mist Network Class"""
+
+    DEFAULT_NETWORK_STATE_FILENAME = "network_state"
+
+    def __init__(self):
+        self.network_members = {}
+        self._LoadMistNetworkState()
+
+    def _LoadMistNetworkState(self):
+        if os.path.isfile(MistNetwork.DEFAULT_NETWORK_STATE_FILENAME):
+            with open(MistNetwork.DEFAULT_NETWORK_STATE_FILENAME, "r") as infile:
+                self.network_members = pickle.load(infile)
+
+    def _RewriteNetworkStateFile(self):
+        with open(MistNetwork.DEFAULT_NETWORK_STATE_FILENAME, "wb") as outfile:
+            pickle.dump(self.network_members, outfile)
+
+    def AddMember(self, member):
+        self.network_members[member.uid] = member
+        self._RewriteNetworkStateFile()
+
+    def DeleteMember(self, member_uid):
+        del self.network_members[member_uid]
+        self._RewriteNetworkStateFile()
+
+    def GetRandomMember(self):
+        return random.choice(self.network_members.values())
+
+    def ListMembers(self):
+        return map(str, self.network_members.values())
 
 
 def CheckFile(file_path):
@@ -165,10 +239,28 @@ def CheckFile(file_path):
 
 
 def main():
-    m = Mist()
-    print m.List()
+    network = MistNetwork()
+    print "network:", network.ListMembers()
+    m1 = Mist.CreateIfDoesNotExist("accounts/a")
+    m1.JoinNetwork(network)
+    m2 = Mist.CreateIfDoesNotExist("accounts/b")
+    m2.JoinNetwork(network)
+    m3 = Mist.CreateIfDoesNotExist("accounts/c")
+    m3.JoinNetwork(network)
+    print "network:", network.ListMembers()
+    print "a:", m1.List()
+    print "b:", m2.List()
+    print "c:", m3.List()
     import pdb; pdb.set_trace()
-    print m.List()
+    print "a:", m1.List()
+    print "b:", m2.List()
+    print "c:", m3.List()
+    print "network:", network.ListMembers()
+    m1.LeaveNetwork(network)
+    m2.LeaveNetwork(network)
+    m3.LeaveNetwork(network)
+    print "network:", network.ListMembers()
+
 
 if __name__ == "__main__":
     main()
