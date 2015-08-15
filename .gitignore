@@ -2,4 +2,4 @@
 venv
 testfiles/*
 accounts/*
-network_state
+*_network_state
