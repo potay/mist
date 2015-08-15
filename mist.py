@@ -4,13 +4,17 @@ import random
 import struct
 import pickle
 import os
+import threading
+import copy
 from Crypto.Cipher import AES
 
 import mist_network
 import mist_watchdog
 
+import hashlib
 
-ENCRYPTION_KEY = "PleaseChangeThis"
+PASSWORD = "ChangeThisPlease"
+ENCRYPTION_KEY = hashlib.sha256(PASSWORD).digest()
 
 
 class MistError(Exception):
@@ -29,18 +33,19 @@ class MistChunk(object):
     def __init__(self, file_uid, folder_path, data, root_path):
         self.file_uid = file_uid
         self.uid = uuid.uuid4()
+        self.size = None
         self.chunk_path = "%s/%s/%s.mist" % (root_path, folder_path, self.uid)
         self._WriteToPath(data)
 
     def _WriteToPath(self, data):
         iv = "".join(chr(random.randint(0, 0xFF)) for i in range(16))
         encryptor = AES.new(ENCRYPTION_KEY, AES.MODE_CBC, iv)
-        filesize = len(data)
+        self.size = len(data)
 
         with open(self.chunk_path, "wb") as outfile:
             outfile.write(self.file_uid.bytes_le)
             outfile.write(self.uid.bytes_le)
-            outfile.write(struct.pack("<Q", filesize))
+            outfile.write(struct.pack("<Q", self.size))
             outfile.write(iv)
 
             if len(data) % 16 != 0:
@@ -61,6 +66,9 @@ class MistChunk(object):
                     return
 
                 original_size = struct.unpack("<Q", infile.read(struct.calcsize("Q")))[0]
+                if self.size != original_size:
+                    print "ERROR: Corrupted file due to filesize."
+                    return
                 iv = infile.read(16)
                 decryptor = AES.new(ENCRYPTION_KEY, AES.MODE_CBC, iv)
                 encrypted_data = infile.read(MistChunk.CHUNK_SIZE)
@@ -74,6 +82,7 @@ class MistChunk(object):
         self.file_uid = None
         self.uid = None
         self.chunk_path = None
+        return True
 
 
 class MistFile(object):
@@ -85,28 +94,58 @@ class MistFile(object):
         self.uid = uuid.uuid4()
         self.mist_network_address = mist_network_address
         self.filename = ntpath.basename(file_path)
+        self.size = None
         self.mist_network_data_file = None
         self._MakeDataFile(file_path)
 
     def _MakeDataFile(self, file_path):
         with open(file_path, "r") as infile:
             data = infile.read()
-            mist_data_file = MistNetworkDataFile(data, self.mist_network_address)
+            iv = "".join(chr(random.randint(0, 0xFF)) for i in range(16))
+            encryptor = AES.new(ENCRYPTION_KEY, AES.MODE_CBC, iv)
+            self.size = len(data)
+
+            encrypted_data = struct.pack("<Q", self.size)
+            encrypted_data += iv
+            if len(data) % 16 != 0:
+                    data += " " * (16 - len(data) % 16)
+            encrypted_data += encryptor.encrypt(data)
+            mist_data_file = MistNetworkDataFile(encrypted_data, self.mist_network_address)
             self.mist_network_data_file = mist_data_file
 
     def Read(self):
         if self.uid:
-            return self.mist_network_data_file.Read()
+            encrypted_data = self.mist_network_data_file.Read()
+            if encrypted_data is None:
+                print "Unable to read file %s" % self.filename
+                return
+            original_size = struct.unpack("<Q", encrypted_data[:struct.calcsize("Q")])[0]
+            encrypted_data = encrypted_data[struct.calcsize("Q"):]
+            if self.size != original_size:
+                print "Corrupted file due to size. Size on record: %s, Size in header: %s" % (self.size, original_size)
+                return
+            iv = encrypted_data[:16]
+            encrypted_data = encrypted_data[16:]
+            if self.size > len(encrypted_data):
+                print "Corrupted file due to size. Size on record: %s, Actual size: %s" % (self.size, len(encrypted_data))
+                return
+            decryptor = AES.new(ENCRYPTION_KEY, AES.MODE_CBC, iv)
+
+            data = decryptor.decrypt(encrypted_data)[:original_size]
+            return data
         else:
             print "File is invalid."
 
     def Delete(self):
         if self.uid:
-            self.mist_network_data_file.Delete()
-            self.uid = None
-            self.mist_network = None
-            self.filename = None
-            self.mist_network_data_file = None
+            if self.mist_network_data_file.Delete():
+                self.uid = None
+                self.mist_network = None
+                self.filename = None
+                self.mist_network_data_file = None
+            else:
+                return False
+        return True
 
     def __str__(self):
         return self.filename
@@ -118,45 +157,69 @@ class MistNetworkDataFile(object):
         self.mist_network_address = mist_network_address
         self.mist_network_member_uid = None
         self.data_uid = None
-        self._StoreDataFileOnNetwork(data)
+        self.size = len(data)
+        self._data = data
+        self._creation_thread = threading.Thread(target=self._StoreDataFileOnNetwork, args=(self._data,))
+        self._creation_thread.start()
 
     def _StoreDataFileOnNetwork(self, data):
-        iv = "".join(chr(random.randint(0, 0xFF)) for i in range(16))
-        encryptor = AES.new(ENCRYPTION_KEY, AES.MODE_CBC, iv)
-        filesize = len(data)
+        if not self.data_uid:
+            # iv = "".join(chr(random.randint(0, 0xFF)) for i in range(16))
+            # encryptor = AES.new(ENCRYPTION_KEY, AES.MODE_CBC, iv)
+            # filesize = len(data)
 
-        encrypted_data = struct.pack("<Q", filesize)
-        encrypted_data += iv
-        if len(data) % 16 != 0:
-                data += " " * (16 - len(data) % 16)
-        encrypted_data += encryptor.encrypt(data)
+            # encrypted_data = struct.pack("<Q", filesize)
+            # encrypted_data += iv
+            # if len(data) % 16 != 0:
+            #         data += " " * (16 - len(data) % 16)
+            # encrypted_data += encryptor.encrypt(data)
 
-        encrypted_data_base64 = encrypted_data.encode("base64", "strict")
+            data_base64 = data.encode("base64", "strict")
 
-        mist_network_client = mist_network.MistNetworkClient(self.mist_network_address)
-        response = mist_network_client.store(encrypted_data_base64)
-        self.mist_network_member_uid = response["network_member_uid"]
-        self.data_uid = uuid.UUID(response["data_uid"])
+            mist_network_client = mist_network.MistNetworkClient(self.mist_network_address)
+            response = mist_network_client.store(data_base64, "base64")
+            self.mist_network_member_uid = response["network_member_uid"]
+            self.data_uid = uuid.UUID(response["data_uid"])
+            self._data = None
 
     def Read(self):
+        if self._creation_thread:
+            self._creation_thread.join(MistDataFile.DEFAULT_READ_TIMEOUT)
+            if self._creation_thread.isAlive():
+                print "Network File reading has timed out as file is still being saved. Please try again later."
+                return
         mist_network_client = mist_network.MistNetworkClient(self.mist_network_address)
         response = mist_network_client.retrieve(self.mist_network_member_uid, str(self.data_uid))
-        encrypted_data_base64 = response["data"]
-        encrypted_data = encrypted_data_base64.decode("base64", "strict")
-
-        original_size = struct.unpack("<Q", encrypted_data[:struct.calcsize("Q")])[0]
-        encrypted_data = encrypted_data[struct.calcsize("Q"):]
-        iv = encrypted_data[:16]
-        encrypted_data = encrypted_data[16:]
-        decryptor = AES.new(ENCRYPTION_KEY, AES.MODE_CBC, iv)
-
-        return decryptor.decrypt(encrypted_data)[:original_size]
+        if "error_message" in response:
+            print "Unable to read data file. Error: %s" % response["error_message"]
+            return None
+        else:
+            return response["data"].decode(response["encoding"])
 
     def Delete(self):
+        if self._creation_thread:
+            self._creation_thread.join(MistDataFile.DEFAULT_READ_TIMEOUT)
+            if self._creation_thread.isAlive():
+                print "Network File deleting has timed out as file is still being saved. Please try again later."
+                return False
         mist_network_client = mist_network.MistNetworkClient(self.mist_network_address)
         response = mist_network_client.delete(self.mist_network_member_uid, str(self.data_uid))
         if response and "error_message" in response:
             print response["error_message"]
+            return False
+        return True
+
+    def __getstate__(self):
+        d = copy.copy(self.__dict__)
+        del d["_creation_thread"]
+        return d
+
+    def __setstate__(self, d):
+        d["_creation_thread"] = None
+        self.__dict__ = d
+        if self._data:
+            self._creation_thread = threading.Thread(target=self._StoreDataFileOnNetwork, args=(self._data,))
+            self._creation_thread.start()
 
 
 class MistDataFile(MistChunk):
@@ -164,46 +227,88 @@ class MistDataFile(MistChunk):
 
     STORAGE_FOLDER_PATH = "chunk"
     DATA_FILE_SPLIT_NUM = 10
+    DEFAULT_READ_TIMEOUT = 10 * 60
 
     def __init__(self, data, mist_network_address, root_path):
         self.uid = uuid.uuid4()
         self.root_path = root_path
+        self.size = len(data)
         self.mist_network_address = mist_network_address
         self.mist_chunks = []
-        self._SplitFileIntoChunks(data)
+        self._data_file_size = len(data)/MistDataFile.DATA_FILE_SPLIT_NUM
+        self._data = data
+        self._creation_thread = threading.Thread(target=self._SplitFileIntoChunks, args=(self._data,))
+        self._creation_thread.start()
 
     def _SplitFileIntoChunks(self, data):
-        if len(data) > MistChunk.CHUNK_SIZE:
-            print len(data), MistDataFile.DATA_FILE_SPLIT_NUM
-            data_file_size = len(data)/MistDataFile.DATA_FILE_SPLIT_NUM
-            print data_file_size
-            for i in xrange(0, len(data), data_file_size):
-                data_part = data[i:i+data_file_size]
+        if self.size > MistChunk.CHUNK_SIZE:
+            data = self._data
+            tmp_size = 0
+            for i in xrange(0, self.size, self._data_file_size):
+                data_part = data[i:i+self._data_file_size]
+                self._data = self._data[self._data_file_size:]
                 mist_chunk = MistNetworkDataFile(data_part, self.mist_network_address)
                 self.mist_chunks.append(mist_chunk)
+                tmp_size += mist_chunk.size
+                print "Length of selfdata:", len(self._data)
+            print "selfdata:", self._data
+            print "Size on record: %s Stored size: %s" % (self.size, tmp_size)
         else:
             mist_chunk = MistChunk(self.uid, MistFile.STORAGE_FOLDER_PATH, data, self.root_path)
+            print "Size on record: %s Stored size: %s" % (self.size, mist_chunk.size)
             self.mist_chunks.append(mist_chunk)
+            self._data = None
 
     def Read(self):
         if self.uid:
+            if self._creation_thread:
+                self._creation_thread.join(MistDataFile.DEFAULT_READ_TIMEOUT)
+                if self._creation_thread.isAlive():
+                    print "Data File reading has timed out as file is still being saved. Please try again later."
+                    return
             data = ""
             for chunk in self.mist_chunks:
-                data += chunk.Read()
+                print "Getting data from chunk type: %s" % type(chunk)
+                data_chunk = chunk.Read()
+                if data_chunk is None or len(data_chunk) != chunk.size:
+                    print "Unable to read data file."
+                    return
+                data += data_chunk
+            print "Size in record: %s Actual size: %s" % (self.size, len(data))
             return data
         else:
             print "File is invalid."
 
     def Delete(self):
+        if self._creation_thread:
+            self._creation_thread.join(MistDataFile.DEFAULT_READ_TIMEOUT)
+            if self._creation_thread.isAlive():
+                print "Data File deleting has timed out as file is still being saved. Please try again later."
+                return False
         for chunk in self.mist_chunks:
-            chunk.Delete()
-            del chunk
+            if chunk.Delete():
+                del chunk
+            else:
+                return False
         self.uid = None
         self.mist_network_address = None
         self.mist_chunks = None
+        return True
 
     def __str__(self):
         return self.filename
+
+    def __getstate__(self):
+        d = copy.copy(self.__dict__)
+        del d["_creation_thread"]
+        return d
+
+    def __setstate__(self, d):
+        d["_creation_thread"] = None
+        self.__dict__ = d
+        if self._data:
+            self._creation_thread = threading.Thread(target=self._SplitFileIntoChunks, args=(self._data,))
+            self._creation_thread.start()
 
 
 class Mist(object):
@@ -222,6 +327,7 @@ class Mist(object):
         self.mist_data_files = {}
         self.event_handler = None
         self.observer = None
+        self._lock = threading.Lock()
 
         if autostart:
             self.Start()
@@ -257,13 +363,28 @@ class Mist(object):
     def _LoadMistFiles(self):
         if os.path.isfile(os.path.join(self.root_path, Mist.DEFAULT_INDEX_FILENAME)):
             with open(os.path.join(self.root_path, Mist.DEFAULT_INDEX_FILENAME), "r") as infile:
-                (self.mist_network_member_uid, self.mist_files, self.mist_data_files) = pickle.load(infile)
+                (self.mist_network_member_uid, self.mist_files, self.mist_data_files) = self._PerformWithLock(pickle.load, infile)
         else:
             self._RewriteMistIndexFile()
 
     def _RewriteMistIndexFile(self):
-        with open(os.path.join(self.root_path, Mist.DEFAULT_INDEX_FILENAME), "wb") as outfile:
-            pickle.dump((self.mist_network_member_uid, self.mist_files, self.mist_data_files), outfile)
+        with self._lock:
+            with open(os.path.join(self.root_path, Mist.DEFAULT_INDEX_FILENAME), "wb") as outfile:
+                pickle.dump((self.mist_network_member_uid, self.mist_files, self.mist_data_files), outfile)
+
+    def _PerformWithLock(self, func, *args, **kwargs):
+        with self._lock:
+            return func(*args, **kwargs)
+
+    def _SetDictKeyValueWithLock(self, dictionary, key, value):
+        def Set():
+            dictionary[key] = value
+        self._PerformWithLock(Set)
+
+    def _DeleteDictKeyWithLock(self, dictionary, key):
+        def Delete():
+            del dictionary[key]
+        self._PerformWithLock(Delete)
 
     def AddFile(self, file_path, overwrite=True):
         if file_path in self.mist_files:
@@ -273,29 +394,37 @@ class Mist(object):
                 print "File already exists. File path: %s" % file_path
                 return
 
-        self.mist_files[file_path] = MistFile(file_path, self.mist_network_address)
+        self._SetDictKeyValueWithLock(self.mist_files, file_path, MistFile(file_path, self.mist_network_address))
         self._RewriteMistIndexFile()
 
     def ModifyFile(self, file_path, overwrite=True):
         if file_path in self.mist_files:
             self.DeleteFile(file_path)
-            self.mist_files[file_path] = MistFile(file_path, self.mist_network_address)
+            self._SetDictKeyValueWithLock(self.mist_files, file_path, MistFile(file_path, self.mist_network_address))
             self._RewriteMistIndexFile()
         else:
             print "File does not exist."
 
     def ReadFile(self, file_path):
         if file_path in self.mist_files:
-            return self.mist_files[file_path].Read()
+            data = self.mist_files[file_path].Read()
+            if data is None or self.mist_files[file_path].size != len(data):
+                print "Unable to read file path: %s" % file_path
+                return
+            else:
+                return data
         else:
             print "File not found. File path: %s" % file_path
             return None
 
     def DeleteFile(self, file_path):
         if file_path in self.mist_files:
-            self.mist_files[file_path].Delete()
-            del self.mist_files[file_path]
-            self._RewriteMistIndexFile()
+            if self.mist_files[file_path].Delete():
+                self._DeleteDictKeyWithLock(self.mist_files, file_path)
+                self._RewriteMistIndexFile()
+            else:
+                return False
+        return True
 
     def ExportFile(self, file_path, export_path):
         data = self.ReadFile(file_path)
@@ -322,8 +451,9 @@ class Mist(object):
             self.mist_local_server.Stop()
             raise MistError("Could not join network. Network address: %s" % mist_network_address)
 
-    def LeaveNetwork(self):
-        self.mist_network_client.leave(str(self.mist_network_member_uid))
+    def LeaveNetwork(self, local=False):
+        if not local:
+            self.mist_network_client.leave(str(self.mist_network_member_uid))
         self.mist_local_server.Stop()
         self.mist_local_server = None
         self.mist_local_address = None
@@ -332,21 +462,30 @@ class Mist(object):
 
     def StoreDataFile(self, data):
         data_file = MistDataFile(data, self.mist_network_address, self.root_path)
-        self.mist_data_files[data_file.uid] = data_file
+        self._SetDictKeyValueWithLock(self.mist_data_files, data_file.uid, data_file)
         self._RewriteMistIndexFile()
         return data_file.uid
 
     def RetrieveDataFile(self, data_uid):
         if data_uid in self.mist_data_files:
-            return self.mist_data_files[data_uid].Read()
+            data = self.mist_data_files[data_uid].Read()
+            if data is None or self.mist_data_files[data_uid].size != len(data):
+                print "Error in getting data file uid: %s" % data_uid
+                return None
+            else:
+                return data
         else:
+            print "Error, invalid data file uid: %s" % data_uid
             return None
 
     def DeleteDataFile(self, data_uid):
         if data_uid in self.mist_data_files:
-            self.mist_data_files[data_uid].Delete()
-            del self.mist_data_files[data_uid]
-            self._RewriteMistIndexFile()
+            if self.mist_data_files[data_uid].Delete():
+                self._DeleteDictKeyWithLock(self.mist_data_files, data_uid)
+                self._RewriteMistIndexFile()
+            else:
+                return False
+        return True
 
 
 def main():
@@ -371,11 +510,13 @@ def main():
                     m.ExportFile(file_path, output_path)
                 print
                 print
+        except KeyboardInterrupt:
+            print "Quiting..."
         finally:
             print "%s:" % args.root_path, m.List()
             m.Stop()
     except MistError as e:
-        print "ERRORRROROROROR", e
+        print "Error:", e
 
 
 if __name__ == "__main__":

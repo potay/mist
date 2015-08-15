@@ -4,6 +4,9 @@ import pickle
 import os
 import pyjsonrpc
 import threading
+import hashlib
+import time
+from gevent import pool
 
 
 class MistNetworkError(Exception):
@@ -33,19 +36,28 @@ class MistNetworkMember(object):
     def SendStoreRequest(self, data):
         self._history.append("store: size: %s" % len(data))
         mist_member_client = MistNetworkClient(self.mist_address)
-        response = mist_member_client.store(data)
+        response = mist_member_client.store(data.encode("base64"), encoding="base64")
         return uuid.UUID(response["data_uid"])
 
     def SendRetrieveRequest(self, data_uid):
         self._history.append("retrieve: %s" % data_uid)
         mist_member_client = MistNetworkClient(self.mist_address)
         response = mist_member_client.retrieve(str(data_uid))
-        return response["data"]
+        if "error_message" in response:
+            print response["error_message"]
+            return None
+        else:
+            return response["data"].decode(response["encoding"])
 
     def SendDeleteRequest(self, data_uid):
         self._history.append("delete: %s" % data_uid)
         mist_member_client = MistNetworkClient(self.mist_address)
-        mist_member_client.delete(str(data_uid))
+        return mist_member_client.delete(str(data_uid))
+
+    def SendDisconnectRequest(self):
+        self._history.append("disconnect request")
+        mist_member_client = MistNetworkClient(self.mist_address)
+        mist_member_client.disconnect()
 
     def __str__(self):
         if self.active:
@@ -60,18 +72,25 @@ class MistNetworkClient(pyjsonrpc.HttpClient):
 
 class MistNetworkMemberServerHTTPRequestHandler(pyjsonrpc.HttpRequestHandler):
     @pyjsonrpc.rpcmethod
-    def store(self, data):
-        data_uid = self.server.StoreData(data)
+    def store(self, data, encoding="ascii"):
+        data_uid = self.server.StoreData(data.decode(encoding))
         return {"data_uid": str(data_uid)}
 
     @pyjsonrpc.rpcmethod
     def retrieve(self, data_uid):
         data = self.server.RetrieveData(uuid.UUID(data_uid))
-        return {"data": data}
+        if data is None:
+            return {"error_message": "Unable to retrieve data."}
+        else:
+            return {"data": data.encode("base64"), "encoding": "base64"}
 
     @pyjsonrpc.rpcmethod
     def delete(self, data_uid):
-        self.server.DeleteData(uuid.UUID(data_uid))
+        return self.server.DeleteData(uuid.UUID(data_uid))
+
+    @pyjsonrpc.rpcmethod
+    def disconnect(self):
+        return self.server.LeaveNetwork()
 
 
 class MistNetworkMemberServer(pyjsonrpc.ThreadingHttpServer):
@@ -95,7 +114,10 @@ class MistNetworkMemberServer(pyjsonrpc.ThreadingHttpServer):
         return self.mist.RetrieveDataFile(data_uid)
 
     def DeleteData(self, data_uid):
-        self.mist.DeleteDataFile(data_uid)
+        return self.mist.DeleteDataFile(data_uid)
+
+    def LeaveNetwork(self):
+        self.mist.LeaveNetwork(local=True)
 
 
 class MistNetworkServerHTTPRequestHandler(pyjsonrpc.HttpRequestHandler):
@@ -113,15 +135,18 @@ class MistNetworkServerHTTPRequestHandler(pyjsonrpc.HttpRequestHandler):
         return True
 
     @pyjsonrpc.rpcmethod
-    def store(self, data):
-        (member_uid, data_uid) = self.server.ProcessStoreRequest(data)
+    def store(self, data, encoding="ascii"):
+        (member_uid, data_uid) = self.server.ProcessStoreRequest(data.decode(encoding))
         return {"network_member_uid": str(member_uid), "data_uid": str(data_uid)}
 
     @pyjsonrpc.rpcmethod
     def retrieve(self, member_uid, data_uid):
         try:
             data = self.server.ProcessRetrieveRequest(uuid.UUID(member_uid), uuid.UUID(data_uid))
-            return {"data": data}
+            if data:
+                return {"data": data.encode("base64"), "encoding": "base64"}
+            else:
+                return {"error_message": "Unable to retrieve data."}
         except MistNetworkError as e:
             return {"error_message": str(e)}
 
@@ -137,14 +162,18 @@ class MistNetworkServer(pyjsonrpc.ThreadingHttpServer):
     """Mist Network Class"""
 
     DEFAULT_NETWORK_STATE_FILENAME = "network_state"
-    ENCRYPTION_KEY = "ChangeThisPlease"
+    PASSWORD = "ChangeThisPlease"
+    ENCRYPTION_KEY = hashlib.sha256(PASSWORD).digest()
     DEFAULT_SERVER_HANDLER = MistNetworkServerHTTPRequestHandler
+    SCHEDULE_REQUEST_DELAY = 5 * 60
+    DEFAULTGREENLET_POOL_SIZE = 100
 
     def __init__(self, name, server_address):
         pyjsonrpc.ThreadingHttpServer.__init__(self, server_address=server_address, RequestHandlerClass=MistNetworkServer.DEFAULT_SERVER_HANDLER)
         self.name = name
         self.network_members = {}
         self.inactive_network_members = {}
+        self.greenlet_pool = pool.Pool(size=MistNetworkServer.DEFAULTGREENLET_POOL_SIZE)
 
     def _LoadMistNetworkState(self):
         if os.path.isfile("%s_%s" % (self.name, MistNetworkServer.DEFAULT_NETWORK_STATE_FILENAME)):
@@ -159,12 +188,19 @@ class MistNetworkServer(pyjsonrpc.ThreadingHttpServer):
 
     def Start(self):
         self._LoadMistNetworkState()
-        # self.httpd.socket = ssl.wrap_socket (self.httpd.socket, certfile='path/to/localhost.pem', server_side=True)
         threading.Thread(target=self.serve_forever).start()
 
     def Stop(self):
+        self.DisconnectAllMembers()
         self.shutdown()
         self._RewriteNetworkStateFile()
+
+    def DisconnectAllMembers(self):
+        print "Disconnecting all members. Count: %s" % len(self.network_members)
+        keys = self.network_members.keys()
+        for member_uid in keys:
+            self.network_members[member_uid].SendDisconnectRequest()
+            self.DeleteMember(member_uid)
 
     def AddMember(self, member_address, member_uid=None):
         if member_uid and member_uid in self.inactive_network_members:
@@ -176,10 +212,12 @@ class MistNetworkServer(pyjsonrpc.ThreadingHttpServer):
             member = MistNetworkMember(member_address)
             self.network_members[member.uid] = member
         self._RewriteNetworkStateFile()
+        print "%s just joined." % str(member)
         return member.uid
 
     def DeleteMember(self, member_uid):
         if member_uid in self.network_members:
+            print "%s just left." % str(self.network_members[member_uid])
             self.inactive_network_members[member_uid] = self.network_members[member_uid]
             self.inactive_network_members[member_uid].Deactivate()
             del self.network_members[member_uid]
@@ -193,20 +231,38 @@ class MistNetworkServer(pyjsonrpc.ThreadingHttpServer):
 
     def ProcessStoreRequest(self, data):
         chosen_member = self.GetRandomMember()
+        # greenlet = self.greenlet_pool.spawn(chosen_member.SendStoreRequest, data)
+        # greenlet.join()
+        # data_uid = greenlet.value
         data_uid = chosen_member.SendStoreRequest(data)
         return (chosen_member.uid, data_uid)
 
     def ProcessRetrieveRequest(self, member_uid, data_uid):
         if member_uid in self.network_members:
-            return self.network_members[member_uid].SendRetrieveRequest(data_uid)
+            # greenlet = self.greenlet_pool.spawn(self.network_members[member_uid].SendRetrieveRequest, data_uid)
+            # greenlet.join()
+            # data = greenlet.value
+            data = self.network_members[member_uid].SendRetrieveRequest(data_uid)
+            return data
         else:
             raise MistNetworkError("Network member is not connected. Member uid: %s" % member_uid)
 
     def ProcessDeleteRequest(self, member_uid, data_uid):
         if member_uid in self.network_members:
-            return self.network_members[member_uid].SendDeleteRequest(data_uid)
+            # greenlet = self.greenlet_pool.spawn(self.network_members[member_uid].SendDeleteRequest, data_uid)
+            # greenlet.join()
+            # if not greenlet.value:
+            if not self.network_members[member_uid].SendDeleteRequest(data_uid):
+                self.ScheduleRequest(self.ProcessDeleteRequest, member_uid, data_uid)
         else:
             raise MistNetworkError("Network member is not connected. Member uid: %s" % member_uid)
+
+    def ScheduleRequest(self, process_request_func, *args, **kwargs):
+        threading.Thread(target=self._ScheduledRequestWorker, args=(process_request_func,)+args, kwargs=kwargs)
+
+    def _ScheduledRequestWorker(self, process_request_func, *args, **kwargs):
+        time.sleep(MistNetworkServer.SCHEDULE_REQUEST_DELAY)
+        process_request_func(*args, **kwargs)
 
 
 def main():
@@ -228,8 +284,7 @@ def main():
                 else:
                     print "  None"
         except KeyboardInterrupt:
-            print "network:", network.ListMembers()
-            network.Stop()
+            print "Quitting..."
     finally:
         print "network:", network.ListMembers()
         network.Stop()
