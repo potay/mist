@@ -1,6 +1,10 @@
 PyYAML==3.11
 argh==0.26.1
+bunch==1.0.1
+gevent==1.0.2
+greenlet==0.4.7
 pathtools==0.1.2
 pycrypto==2.6.1
+python-jsonrpc==0.7.12
 watchdog==0.8.3
 wsgiref==0.1.2
