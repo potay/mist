@@ -4,120 +4,52 @@ import pickle
 import os
 import pyjsonrpc
 import threading
-import hashlib
 import time
 from gevent import pool
+import mist_network_member
 
 
 class MistNetworkError(Exception):
     pass
 
 
-class MistNetworkMember(object):
-    """Mist Network Member Class"""
+class MistNetworkClient(pyjsonrpc.HttpClient):
+    def JoinNetwork(self, member_address, member_uid=None):
+        try:
+            if self.mist_network_member_uid:
+                response = self.join(member_address, str(member_uid))
+            else:
+                response = self.join(self.mist_local_address)
+            return uuid.UUID(response["network_member_uid"])
+        except:
+            print "Could not join network. Network address: %s" % self.url
+            return None
 
-    def __init__(self, mist_address):
-        self.uid = uuid.uuid4()
-        self.mist_address = None
-        self._history = []
-        self.active = False
-        self.Activate(mist_address)
+    def LeaveNetwork(self, member_uid):
+        self.mist_network_client.leave(str(member_uid))
 
-    def Activate(self, mist_address):
-        self.mist_address = mist_address
-        self.active = True
-        self._history.append("Activated: %s" % mist_address)
+    def StoreDataOnNetwork(self, data):
+        encoding = "base64"
+        data_base64 = data.encode(encoding, "strict")
+        response = self.store(data_base64, encoding)
+        mist_network_member_uid = response["network_member_uid"]
+        data_uid = uuid.UUID(response["data_uid"])
+        return (mist_network_member_uid, data_uid)
 
-    def Deactivate(self):
-        self.mist_address = None
-        self.active = False
-        self._history.append("Deactivated")
-
-    def SendStoreRequest(self, data):
-        self._history.append("store: size: %s" % len(data))
-        mist_member_client = MistNetworkClient(self.mist_address)
-        response = mist_member_client.store(data.encode("base64"), encoding="base64")
-        return uuid.UUID(response["data_uid"])
-
-    def SendRetrieveRequest(self, data_uid):
-        self._history.append("retrieve: %s" % data_uid)
-        mist_member_client = MistNetworkClient(self.mist_address)
-        response = mist_member_client.retrieve(str(data_uid))
+    def RetrieveDataOnNetwork(self, member_uid, data_uid):
+        response = self.retrieve(member_uid, str(data_uid))
         if "error_message" in response:
-            print response["error_message"]
+            print "Unable to read data file. Error: %s" % response["error_message"]
             return None
         else:
             return response["data"].decode(response["encoding"])
 
-    def SendDeleteRequest(self, data_uid):
-        self._history.append("delete: %s" % data_uid)
-        mist_member_client = MistNetworkClient(self.mist_address)
-        return mist_member_client.delete(str(data_uid))
-
-    def SendDisconnectRequest(self):
-        self._history.append("disconnect request")
-        mist_member_client = MistNetworkClient(self.mist_address)
-        mist_member_client.disconnect()
-
-    def __str__(self):
-        if self.active:
-            return "%s@%s" % (self.uid, self.mist_address)
-        else:
-            return "%s" % self.uid
-
-
-class MistNetworkClient(pyjsonrpc.HttpClient):
-    pass
-
-
-class MistNetworkMemberServerHTTPRequestHandler(pyjsonrpc.HttpRequestHandler):
-    @pyjsonrpc.rpcmethod
-    def store(self, data, encoding="ascii"):
-        data_uid = self.server.StoreData(data.decode(encoding))
-        return {"data_uid": str(data_uid)}
-
-    @pyjsonrpc.rpcmethod
-    def retrieve(self, data_uid):
-        data = self.server.RetrieveData(uuid.UUID(data_uid))
-        if data is None:
-            return {"error_message": "Unable to retrieve data."}
-        else:
-            return {"data": data.encode("base64"), "encoding": "base64"}
-
-    @pyjsonrpc.rpcmethod
-    def delete(self, data_uid):
-        return self.server.DeleteData(uuid.UUID(data_uid))
-
-    @pyjsonrpc.rpcmethod
-    def disconnect(self):
-        return self.server.LeaveNetwork()
-
-
-class MistNetworkMemberServer(pyjsonrpc.ThreadingHttpServer):
-    DEFAULT_SERVER_HANDLER = MistNetworkMemberServerHTTPRequestHandler
-
-    def __init__(self, mist, host):
-        pyjsonrpc.ThreadingHttpServer.__init__(self, server_address=(host, 0), RequestHandlerClass=MistNetworkMemberServer.DEFAULT_SERVER_HANDLER)
-        self.server_address = self.socket.getsockname()
-        self.mist = mist
-
-    def Start(self):
-        threading.Thread(target=self.serve_forever).start()
-
-    def Stop(self):
-        self.shutdown()
-
-    def StoreData(self, data):
-        return self.mist.StoreDataFile(data)
-
-    def RetrieveData(self, data_uid):
-        return self.mist.RetrieveDataFile(data_uid)
-
-    def DeleteData(self, data_uid):
-        return self.mist.DeleteDataFile(data_uid)
-
-    def LeaveNetwork(self):
-        self.mist.LeaveNetwork(local=True)
+    def DeleteDataOnNetwork(self, member_uid, data_uid):
+        response = self.delete(member_uid, str(data_uid))
+        if response and "error_message" in response:
+            print response["error_message"]
+            return False
+        return True
 
 
 class MistNetworkServerHTTPRequestHandler(pyjsonrpc.HttpRequestHandler):
@@ -162,8 +94,6 @@ class MistNetworkServer(pyjsonrpc.ThreadingHttpServer):
     """Mist Network Class"""
 
     DEFAULT_NETWORK_STATE_FILENAME = "network_state"
-    PASSWORD = "ChangeThisPlease"
-    ENCRYPTION_KEY = hashlib.sha256(PASSWORD).digest()
     DEFAULT_SERVER_HANDLER = MistNetworkServerHTTPRequestHandler
     SCHEDULE_REQUEST_DELAY = 5 * 60
     DEFAULTGREENLET_POOL_SIZE = 100
@@ -209,7 +139,7 @@ class MistNetworkServer(pyjsonrpc.ThreadingHttpServer):
             self.network_members[member_uid] = member
             del self.inactive_network_members[member_uid]
         else:
-            member = MistNetworkMember(member_address)
+            member = mist_network_member.MistNetworkMember(member_address)
             self.network_members[member.uid] = member
         self._RewriteNetworkStateFile()
         print "%s just joined." % str(member)
@@ -277,10 +207,10 @@ def main():
                 print "network:", network.ListMembers()
                 print "Active Members:"
                 for member in network.network_members.values():
-                    print "  %s: %s" % (str(member), member._history)
+                    print "  %s: %s" % (str(member), member._history[-5:])
                 print "Inactive Members:"
                 for member in network.inactive_network_members.values():
-                    print "  %s: %s" % (str(member), member._history)
+                    print "  %s: %s" % (str(member), member._history[-5:])
                 else:
                     print "  None"
         except KeyboardInterrupt:

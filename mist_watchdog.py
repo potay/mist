@@ -1,5 +1,6 @@
 from __future__ import with_statement
 import mist
+import mist_file
 import os
 import collections
 from watchdog.utils.dirsnapshot import DirectorySnapshotDiff
@@ -23,7 +24,7 @@ from watchdog.events import PatternMatchingEventHandler
 
 
 class MistWatchdogPollingEmitter(PollingEmitter):
-    MODIFYING_DELAY_COUNT = 5
+    MODIFYING_DELAY_COUNT = 10
 
     def __init__(self, *args, **kwargs):
         PollingEmitter.__init__(self, *args, **kwargs)
@@ -48,21 +49,21 @@ class MistWatchdogPollingEmitter(PollingEmitter):
             # Files.
             for src_path in events.files_deleted:
                 self._modifying_files[None][src_path] = MistWatchdogPollingEmitter.MODIFYING_DELAY_COUNT
-                self.queue_event(FileDeletedEvent(src_path))
+                # self.queue_event(FileDeletedEvent(src_path))
 
             for src_path in events.files_modified:
                 self._modifying_files[src_path][src_path] = MistWatchdogPollingEmitter.MODIFYING_DELAY_COUNT
 
             for src_path in events.files_created:
                 self._modifying_files[src_path][None] = MistWatchdogPollingEmitter.MODIFYING_DELAY_COUNT
-                self.queue_event(FileCreatedEvent(src_path))
+                # self.queue_event(FileCreatedEvent(src_path))
 
             for src_path, dest_path in events.files_moved:
                 self._modifying_files[dest_path] = self._modifying_files[src_path]
                 del self._modifying_files[src_path]
                 for modifying_src_path in self._modifying_files[dest_path]:
                     self._modifying_files[dest_path][modifying_src_path] = MistWatchdogPollingEmitter.MODIFYING_DELAY_COUNT
-                self.queue_event(FileMovedEvent(src_path, dest_path))
+                # self.queue_event(FileMovedEvent(src_path, dest_path))
 
             deletion_list = []
 
@@ -70,6 +71,7 @@ class MistWatchdogPollingEmitter(PollingEmitter):
                 for modifying_src_path in self._modifying_files[modifying_dest_path]:
                     self._modifying_files[modifying_dest_path][modifying_src_path] -= 1
                     if self._modifying_files[modifying_dest_path][modifying_src_path] == 0:
+                        print "New Event: Src: %s, Dest: %s" % (modifying_src_path, modifying_dest_path)
                         if modifying_dest_path is not None and modifying_src_path is not None:
                             self.queue_event(FileDeletedEvent(modifying_src_path))
                             self.queue_event(FileCreatedEvent(modifying_dest_path))
@@ -106,7 +108,7 @@ class MistWatchdogEventHandler(PatternMatchingEventHandler):
     ]
 
     IGNORED_MIST_ROOT_PATHS = [
-        (mist.MistFile.STORAGE_FOLDER_PATH, "folder"),
+        (mist_file.MistFile.STORAGE_FOLDER_PATH, "folder"),
         (mist.Mist.DEFAULT_INDEX_FILENAME, "file"),
     ]
 
