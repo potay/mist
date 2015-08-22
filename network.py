@@ -78,6 +78,11 @@ class MistNetworkServerHTTPRequestHandler(pyjsonrpc.HttpRequestHandler):
         return True
 
     @pyjsonrpc.rpcmethod
+    def get_peer(self, member_uid):
+        peer = self.server.GetRandomMember()
+        return {"peer_network_uid": str(peer.uid), "peer_address": peer.mist_address}
+
+    @pyjsonrpc.rpcmethod
     def store(self, data, encoding="ascii"):
         (member_uid, data_uid) = self.server.ProcessStoreRequest(data.decode(encoding))
         return {"network_member_uid": str(member_uid), "data_uid": str(data_uid)}
