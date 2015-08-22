@@ -4,7 +4,7 @@ import struct
 import os
 from Crypto.Cipher import AES
 
-import mist_settings
+import settings
 
 
 class MistChunk(object):
@@ -25,7 +25,7 @@ class MistChunk(object):
 
     def _WriteToPath(self, data):
         iv = "".join(chr(random.randint(0, 0xFF)) for i in range(16))
-        encryptor = AES.new(mist_settings.ENCRYPTION_KEY, AES.MODE_CBC, iv)
+        encryptor = AES.new(settings.ENCRYPTION_KEY, AES.MODE_CBC, iv)
         self.size = len(data)
 
         with open(self.chunk_path, "wb") as outfile:
@@ -56,7 +56,7 @@ class MistChunk(object):
                     print "ERROR: Corrupted file due to filesize."
                     return
                 iv = infile.read(16)
-                decryptor = AES.new(mist_settings.ENCRYPTION_KEY, AES.MODE_CBC, iv)
+                decryptor = AES.new(settings.ENCRYPTION_KEY, AES.MODE_CBC, iv)
                 encrypted_data = infile.read(MistChunk.CHUNK_SIZE)
 
             return decryptor.decrypt(encrypted_data)[:original_size]

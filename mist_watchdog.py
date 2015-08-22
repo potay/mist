@@ -1,6 +1,6 @@
 from __future__ import with_statement
 import mist
-import mist_file
+import files
 import os
 import collections
 from watchdog.utils.dirsnapshot import DirectorySnapshotDiff
@@ -108,7 +108,7 @@ class MistWatchdogEventHandler(PatternMatchingEventHandler):
     ]
 
     IGNORED_MIST_ROOT_PATHS = [
-        (mist_file.MistFile.STORAGE_FOLDER_PATH, "folder"),
+        (files.MistFile.STORAGE_FOLDER_PATH, "folder"),
         (mist.Mist.DEFAULT_INDEX_FILENAME, "file"),
     ]
 

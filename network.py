@@ -6,7 +6,7 @@ import pyjsonrpc
 import threading
 import time
 from gevent import pool
-import mist_network_member
+import network_member
 
 
 class MistNetworkError(Exception):
@@ -139,7 +139,7 @@ class MistNetworkServer(pyjsonrpc.ThreadingHttpServer):
             self.network_members[member_uid] = member
             del self.inactive_network_members[member_uid]
         else:
-            member = mist_network_member.MistNetworkMember(member_address)
+            member = network_member.MistNetworkMember(member_address)
             self.network_members[member.uid] = member
         self._RewriteNetworkStateFile()
         print "%s just joined." % str(member)

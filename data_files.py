@@ -2,9 +2,9 @@ import uuid
 import threading
 import copy
 
-import mist_network
-import mist_chunk
-import mist_file
+import network
+import chunk
+import files
 
 
 class MistNetworkDataFile(object):
@@ -20,7 +20,7 @@ class MistNetworkDataFile(object):
 
     def _StoreDataFileOnNetwork(self, data):
         if not self.data_uid:
-            mist_network_client = mist_network.MistNetworkClient(self.mist_network_address)
+            mist_network_client = network.MistNetworkClient(self.mist_network_address)
             (self.mist_network_member_uid, self.data_uid) = mist_network_client.StoreDataOnNetwork(data)
             self._data = None
 
@@ -30,7 +30,7 @@ class MistNetworkDataFile(object):
             if self._creation_thread.isAlive():
                 print "Network File reading has timed out as file is still being saved. Please try again later."
                 return
-        mist_network_client = mist_network.MistNetworkClient(self.mist_network_address)
+        mist_network_client = network.MistNetworkClient(self.mist_network_address)
         return mist_network_client.RetrieveDataOnNetwork(self.mist_network_member_uid, str(self.data_uid))
 
     def Delete(self):
@@ -39,7 +39,7 @@ class MistNetworkDataFile(object):
             if self._creation_thread.isAlive():
                 print "Network File deleting has timed out as file is still being saved. Please try again later."
                 return False
-        mist_network_client = mist_network.MistNetworkClient(self.mist_network_address)
+        mist_network_client = network.MistNetworkClient(self.mist_network_address)
         return mist_network_client.DeleteDataOnNetwork(self.mist_network_member_uid, str(self.data_uid))
 
     def __getstate__(self):
@@ -55,7 +55,7 @@ class MistNetworkDataFile(object):
             self._creation_thread.start()
 
 
-class MistDataFile(mist_chunk.MistChunk):
+class MistDataFile(chunk.MistChunk):
     """Mist Data File class"""
 
     STORAGE_FOLDER_PATH = "chunk"
@@ -68,16 +68,16 @@ class MistDataFile(mist_chunk.MistChunk):
         self.size = len(data)
         self.mist_network_address = mist_network_address
         self.mist_chunks = []
-        if len(data)/mist_chunk.MistChunk.CHUNK_SIZE > MistDataFile.MAX_DATA_FILE_SPLIT_NUM:
+        if len(data)/chunk.MistChunk.CHUNK_SIZE > MistDataFile.MAX_DATA_FILE_SPLIT_NUM:
             self._data_file_size = len(data)/MistDataFile.MAX_DATA_FILE_SPLIT_NUM
         else:
-            self._data_file_size = mist_chunk.MistChunk.CHUNK_SIZE
+            self._data_file_size = chunk.MistChunk.CHUNK_SIZE
         self._data = data
         self._creation_thread = threading.Thread(target=self._SplitFileIntoChunks, args=(self._data,))
         self._creation_thread.start()
 
     def _SplitFileIntoChunks(self, data):
-        if self.size > mist_chunk.MistChunk.CHUNK_SIZE:
+        if self.size > chunk.MistChunk.CHUNK_SIZE:
             data = self._data
             tmp_size = 0
             for i in xrange(0, self.size, self._data_file_size):
@@ -87,7 +87,7 @@ class MistDataFile(mist_chunk.MistChunk):
                 self.mist_chunks.append(chunk)
                 tmp_size += chunk.size
         else:
-            chunk = mist_chunk.MistChunk(self.uid, mist_file.MistFile.STORAGE_FOLDER_PATH, data, self.root_path)
+            chunk = chunk.MistChunk(self.uid, files.MistFile.STORAGE_FOLDER_PATH, data, self.root_path)
             self.mist_chunks.append(chunk)
             self._data = None
 
@@ -105,7 +105,11 @@ class MistDataFile(mist_chunk.MistChunk):
                     print "Unable to read data file."
                     return
                 data += data_chunk
-            return data
+            if self.size != len(data):
+                print "Corrupted data file due to size. Size on record: %s, Actual size: %s" % (self.size, len(data))
+                return None
+            else:
+                return data
         else:
             print "File is invalid."
 

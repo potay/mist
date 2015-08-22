@@ -3,11 +3,11 @@ import pickle
 import os
 import threading
 
-from mist import mist_network
-from mist import mist_network_member
-from mist import mist_watchdog
-from mist import mist_file
-from mist import mist_data_files
+import network
+import network_member
+import mist_watchdog
+import files
+import data_files
 
 
 class MistError(Exception):
@@ -40,8 +40,8 @@ class Mist(object):
     def CreateIfDoesNotExist(root_path):
         if not os.path.exists(root_path):
             os.makedirs(root_path)
-        if not os.path.exists(os.path.join(root_path, mist_file.MistFile.STORAGE_FOLDER_PATH)):
-            os.makedirs(os.path.join(root_path, mist_file.MistFile.STORAGE_FOLDER_PATH))
+        if not os.path.exists(os.path.join(root_path, files.MistFile.STORAGE_FOLDER_PATH)):
+            os.makedirs(os.path.join(root_path, files.MistFile.STORAGE_FOLDER_PATH))
         return Mist(root_path)
 
     def Start(self, network=None):
@@ -101,13 +101,13 @@ class Mist(object):
                 print "File already exists. File path: %s" % file_path
                 return
 
-        self._SetDictKeyValueWithLock(self.mist_files, file_path, mist_file.MistFile(file_path, self.mist_network_address))
+        self._SetDictKeyValueWithLock(self.mist_files, file_path, files.MistFile(file_path, self.mist_network_address))
         self._RewriteMistIndexFile()
 
     def ModifyFile(self, file_path, overwrite=True):
         if file_path in self.mist_files:
             self.DeleteFile(file_path)
-            self._SetDictKeyValueWithLock(self.mist_files, file_path, mist_file.MistFile(file_path, self.mist_network_address))
+            self._SetDictKeyValueWithLock(self.mist_files, file_path, files.MistFile(file_path, self.mist_network_address))
             self._RewriteMistIndexFile()
         else:
             print "File does not exist."
@@ -115,7 +115,7 @@ class Mist(object):
     def ReadFile(self, file_path):
         if file_path in self.mist_files:
             data = self.mist_files[file_path].Read()
-            if data is None or self.mist_files[file_path].size != len(data):
+            if data is None:
                 print "Unable to read file path: %s" % file_path
                 return
             else:
@@ -144,8 +144,8 @@ class Mist(object):
 
     def JoinNetwork(self, mist_network_address):
         self.mist_network_address = mist_network_address
-        self.mist_network_client = mist_network.MistNetworkClient(self.mist_network_address)
-        self.mist_local_server = mist_network_member.MistNetworkMemberServer(self, "localhost")
+        self.mist_network_client = network.MistNetworkClient(self.mist_network_address)
+        self.mist_local_server = network_member.MistNetworkMemberServer(self, "localhost")
         self.mist_local_server.Start()
         self.mist_local_address = "http://%s:%d" % self.mist_local_server.server_address
         uid = self.mist_network_client.JoinNetwork(self.mist_local_address, self.mist_network_member_uid)
@@ -165,7 +165,7 @@ class Mist(object):
         self.mist_network_address = None
 
     def StoreDataFile(self, data):
-        data_file = mist_data_files.MistDataFile(data, self.mist_network_address, self.root_path)
+        data_file = data_files.MistDataFile(data, self.mist_network_address, self.root_path)
         self._SetDictKeyValueWithLock(self.mist_data_files, data_file.uid, data_file)
         self._RewriteMistIndexFile()
         return data_file.uid
@@ -173,7 +173,7 @@ class Mist(object):
     def RetrieveDataFile(self, data_uid):
         if data_uid in self.mist_data_files:
             data = self.mist_data_files[data_uid].Read()
-            if data is None or self.mist_data_files[data_uid].size != len(data):
+            if data is None:
                 print "Error in getting data file uid: %s" % data_uid
                 return None
             else:

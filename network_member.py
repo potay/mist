@@ -1,7 +1,7 @@
 import uuid
 import pyjsonrpc
 import threading
-import mist_network
+import network
 
 
 class MistNetworkMemberError(Exception):
@@ -30,13 +30,13 @@ class MistNetworkMember(object):
 
     def SendStoreRequest(self, data):
         self._history.append("store: size: %s" % len(data))
-        mist_member_client = mist_network.MistNetworkClient(self.mist_address)
+        mist_member_client = network.MistNetworkClient(self.mist_address)
         response = mist_member_client.store(data.encode("base64"), encoding="base64")
         return uuid.UUID(response["data_uid"])
 
     def SendRetrieveRequest(self, data_uid):
         self._history.append("retrieve: %s" % data_uid)
-        mist_member_client = mist_network.MistNetworkClient(self.mist_address)
+        mist_member_client = network.MistNetworkClient(self.mist_address)
         response = mist_member_client.retrieve(str(data_uid))
         if "error_message" in response:
             print response["error_message"]
@@ -46,12 +46,12 @@ class MistNetworkMember(object):
 
     def SendDeleteRequest(self, data_uid):
         self._history.append("delete: %s" % data_uid)
-        mist_member_client = mist_network.MistNetworkClient(self.mist_address)
+        mist_member_client = network.MistNetworkClient(self.mist_address)
         return mist_member_client.delete(str(data_uid))
 
     def SendDisconnectRequest(self):
         self._history.append("disconnect request")
-        mist_member_client = mist_network.MistNetworkClient(self.mist_address)
+        mist_member_client = network.MistNetworkClient(self.mist_address)
         mist_member_client.disconnect()
 
     def __str__(self):
