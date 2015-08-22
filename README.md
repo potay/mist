@@ -7,14 +7,13 @@ To start the network, run:
 python network.py
 ```
 
-Before creating your account, you should change your encryption password.
-To change the encryption password, edit the following line in ```settings.py```:
-```
+Before creating your account, you should change your encryption password. To change the encryption password, edit the following line in ```settings.py```:
+```shell
 PASSWORD = "ChangeThisPlease"
 ```
 
 To connect to the network, run:
-```
+```shell
 python mist.py "Your account name"
 ```
 
