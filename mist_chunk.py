@@ -20,12 +20,13 @@ class MistChunk(object):
                    (16, "Chunk UID"),
                    (8, "File size"),
                    (16, "Initialization Vector"))
+    DEFAULT_EXT = "mist"
 
     def __init__(self, file_uid, folder_path, data, root_path):
         self.file_uid = file_uid
         self.uid = uuid.uuid4()
         self.size = None
-        self.chunk_path = "%s/%s/%s.mist" % (root_path, folder_path, self.uid)
+        self.chunk_path = "%s/%s/%s.%s" % (root_path, folder_path, self.uid, MistChunk.DEFAULT_EXT)
         self._WriteToPath(data)
 
     def _WriteToPath(self, data):
