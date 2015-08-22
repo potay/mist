@@ -2,6 +2,11 @@ import uuid
 import pyjsonrpc
 import threading
 import network
+import logging
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class MistNetworkMemberError(Exception):
@@ -39,7 +44,7 @@ class MistNetworkMember(object):
         mist_member_client = network.MistNetworkClient(self.mist_address)
         response = mist_member_client.retrieve(str(data_uid))
         if "error_message" in response:
-            print response["error_message"]
+            logger.error("Unable to retrieve data. data_uid: %s, Error: %s", data_uid, response["error_message"])
             return None
         else:
             return response["data"].decode(response["encoding"])
@@ -62,6 +67,12 @@ class MistNetworkMember(object):
 
 
 class MistNetworkMemberServerHTTPRequestHandler(pyjsonrpc.HttpRequestHandler):
+    def log_message(self, format, *args):
+        logger.debug("%s - - [%s] %s\n",
+                     (self.client_address[0],
+                      self.log_date_time_string(),
+                      format % args))
+
     @pyjsonrpc.rpcmethod
     def store(self, data, encoding="ascii"):
         data_uid = self.server.StoreData(data.decode(encoding))

@@ -1,6 +1,12 @@
 import os
 import re
 import shutil
+import logging
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 for f in os.listdir("."):
     if re.search(".*_network_state", f):

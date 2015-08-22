@@ -2,6 +2,7 @@ from __future__ import with_statement
 import mist
 import files
 import os
+import logging
 import collections
 from watchdog.utils.dirsnapshot import DirectorySnapshotDiff
 from watchdog.observers.polling import PollingEmitter
@@ -21,6 +22,10 @@ from watchdog.events import (
     FileModifiedEvent
 )
 from watchdog.events import PatternMatchingEventHandler
+
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 class MistWatchdogPollingEmitter(PollingEmitter):
@@ -71,7 +76,7 @@ class MistWatchdogPollingEmitter(PollingEmitter):
                 for modifying_src_path in self._modifying_files[modifying_dest_path]:
                     self._modifying_files[modifying_dest_path][modifying_src_path] -= 1
                     if self._modifying_files[modifying_dest_path][modifying_src_path] == 0:
-                        print "New Event: Src: %s, Dest: %s" % (modifying_src_path, modifying_dest_path)
+                        logging.debug("New Event: Src: %s, Dest: %s", (modifying_src_path, modifying_dest_path))
                         if modifying_dest_path is not None and modifying_src_path is not None:
                             self.queue_event(FileDeletedEvent(modifying_src_path))
                             self.queue_event(FileCreatedEvent(modifying_dest_path))
@@ -137,43 +142,43 @@ class MistWatchdogEventHandler(PatternMatchingEventHandler):
         super(MistWatchdogEventHandler, self).on_moved(event)
 
         what = 'directory' if event.is_directory else 'file'
-        print "Moved %s: from %s to %s" % (what, event.src_path, event.dest_path)
+        logging.debug("Moved %s: from %s to %s", what, event.src_path, event.dest_path)
 
         if not event.is_directory:
             self.mist_parent.DeleteFile(event.src_path)
             self.mist_parent.AddFile(event.dest_path)
 
-        print "%s:" % self.mist_parent.root_path, self.mist_parent.List()
+        logging.debug("%s: %s", self.mist_parent.root_path, self.mist_parent.List())
 
     def on_created(self, event):
         super(MistWatchdogEventHandler, self).on_created(event)
 
         what = 'directory' if event.is_directory else 'file'
-        print "Created %s: %s" % (what, event.src_path)
+        logging.debug("Created %s: %s", (what, event.src_path))
 
         if not event.is_directory:
             self.mist_parent.AddFile(event.src_path, False)
 
-        print "%s:" % self.mist_parent.root_path, self.mist_parent.List()
+        logging.debug("%s: %s", self.mist_parent.root_path, self.mist_parent.List())
 
     def on_deleted(self, event):
         super(MistWatchdogEventHandler, self).on_deleted(event)
 
         what = 'directory' if event.is_directory else 'file'
-        print "Deleted %s: %s" % (what, event.src_path)
+        logging.debug("Deleted %s: %s", what, event.src_path)
 
         if not event.is_directory:
             self.mist_parent.DeleteFile(event.src_path)
 
-        print "%s:" % self.mist_parent.root_path, self.mist_parent.List()
+        logging.debug("%s: %s", self.mist_parent.root_path, self.mist_parent.List())
 
     def on_modified(self, event):
         super(MistWatchdogEventHandler, self).on_modified(event)
 
         what = 'directory' if event.is_directory else 'file'
-        print "Modified %s: %s" % (what, event.src_path)
+        logging.debug("Modified %s: %s", what, event.src_path)
 
         if not event.is_directory:
             self.mist_parent.ModifyFile(event.src_path)
 
-        print "%s:" % self.mist_parent.root_path, self.mist_parent.List()
+        logging.debug("%s: %s", self.mist_parent.root_path, self.mist_parent.List())

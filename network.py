@@ -4,9 +4,14 @@ import pickle
 import os
 import pyjsonrpc
 import threading
+import logging
 import time
 from gevent import pool
 import network_member
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class MistNetworkError(Exception):
@@ -22,11 +27,11 @@ class MistNetworkClient(pyjsonrpc.HttpClient):
                 response = self.join(self.mist_local_address)
             return uuid.UUID(response["network_member_uid"])
         except:
-            print "Could not join network. Network address: %s" % self.url
+            logger.error("Could not join network. Network address: %s", self.url)
             return None
 
     def LeaveNetwork(self, member_uid):
-        self.mist_network_client.leave(str(member_uid))
+        self.leave(str(member_uid))
 
     def StoreDataOnNetwork(self, data):
         encoding = "base64"
@@ -39,7 +44,7 @@ class MistNetworkClient(pyjsonrpc.HttpClient):
     def RetrieveDataOnNetwork(self, member_uid, data_uid):
         response = self.retrieve(member_uid, str(data_uid))
         if "error_message" in response:
-            print "Unable to read data file. Error: %s" % response["error_message"]
+            logger.error("Unable to read data file. Error: %s", response["error_message"])
             return None
         else:
             return response["data"].decode(response["encoding"])
@@ -47,12 +52,18 @@ class MistNetworkClient(pyjsonrpc.HttpClient):
     def DeleteDataOnNetwork(self, member_uid, data_uid):
         response = self.delete(member_uid, str(data_uid))
         if response and "error_message" in response:
-            print response["error_message"]
+            logger.error("Unable to delete data file. Error: %s", response["error_message"])
             return False
         return True
 
 
 class MistNetworkServerHTTPRequestHandler(pyjsonrpc.HttpRequestHandler):
+    def log_message(self, format, *args):
+        logger.debug("%s - - [%s] %s\n",
+                     (self.client_address[0],
+                      self.log_date_time_string(),
+                      format % args))
+
     @pyjsonrpc.rpcmethod
     def join(self, member_address, member_uid=None):
         if member_uid:
@@ -126,7 +137,7 @@ class MistNetworkServer(pyjsonrpc.ThreadingHttpServer):
         self._RewriteNetworkStateFile()
 
     def DisconnectAllMembers(self):
-        print "Disconnecting all members. Count: %s" % len(self.network_members)
+        logger.info("Disconnecting all members. Count: %s", len(self.network_members))
         keys = self.network_members.keys()
         for member_uid in keys:
             self.network_members[member_uid].SendDisconnectRequest()
@@ -142,12 +153,12 @@ class MistNetworkServer(pyjsonrpc.ThreadingHttpServer):
             member = network_member.MistNetworkMember(member_address)
             self.network_members[member.uid] = member
         self._RewriteNetworkStateFile()
-        print "%s just joined." % str(member)
+        logger.info("%s just joined.", str(member))
         return member.uid
 
     def DeleteMember(self, member_uid):
         if member_uid in self.network_members:
-            print "%s just left." % str(self.network_members[member_uid])
+            logger.info("%s just left.", str(self.network_members[member_uid]))
             self.inactive_network_members[member_uid] = self.network_members[member_uid]
             self.inactive_network_members[member_uid].Deactivate()
             del self.network_members[member_uid]
@@ -203,7 +214,7 @@ def main():
         try:
             while True:
                 print
-                raw_input("Boo!")
+                raw_input("")
                 print "network:", network.ListMembers()
                 print "Active Members:"
                 for member in network.network_members.values():

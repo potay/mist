@@ -2,12 +2,17 @@ import uuid
 import pickle
 import os
 import threading
+import logging
 
 import network
 import network_member
 import mist_watchdog
 import files
 import data_files
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class MistError(Exception):
@@ -98,7 +103,7 @@ class Mist(object):
             if overwrite:
                 self.DeleteFile(file_path)
             else:
-                print "File already exists. File path: %s" % file_path
+                logger.error("File already exists. File path: %s", file_path)
                 return
 
         self._SetDictKeyValueWithLock(self.mist_files, file_path, files.MistFile(file_path, self.mist_network_address))
@@ -110,18 +115,18 @@ class Mist(object):
             self._SetDictKeyValueWithLock(self.mist_files, file_path, files.MistFile(file_path, self.mist_network_address))
             self._RewriteMistIndexFile()
         else:
-            print "File does not exist."
+            logger.error("File does not exist. File path: %s", file_path)
 
     def ReadFile(self, file_path):
         if file_path in self.mist_files:
             data = self.mist_files[file_path].Read()
             if data is None:
-                print "Unable to read file path: %s" % file_path
+                logger.error("Unable to read file path: %s", file_path)
                 return
             else:
                 return data
         else:
-            print "File not found. File path: %s" % file_path
+            logger.warning("File not found. File path: %s", file_path)
             return None
         self._RewriteMistIndexFile()
 
@@ -174,12 +179,12 @@ class Mist(object):
         if data_uid in self.mist_data_files:
             data = self.mist_data_files[data_uid].Read()
             if data is None:
-                print "Error in getting data file uid: %s" % data_uid
+                logger.error("Error in getting data file uid: %s", data_uid)
                 return None
             else:
                 return data
         else:
-            print "Error, invalid data file uid: %s" % data_uid
+            logger.error("Error, invalid data file uid: %s", data_uid)
             return None
 
     def DeleteDataFile(self, data_uid):

@@ -2,10 +2,15 @@ import uuid
 import ntpath
 import random
 import struct
+import logging
 from Crypto.Cipher import AES
 
 import data_files
 import settings
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class MistFile(object):
@@ -40,12 +45,12 @@ class MistFile(object):
         if self.uid:
             encrypted_data = self.mist_network_data_file.Read()
             if encrypted_data is None:
-                print "Unable to read file %s" % self.filename
+                logger.error("Unable to read file %s", self.filename)
                 return None
             original_size = struct.unpack("<Q", encrypted_data[:struct.calcsize("Q")])[0]
             encrypted_data = encrypted_data[struct.calcsize("Q"):]
             if self.size != original_size:
-                print "Corrupted file due to size. Size on record: %s, Size in header: %s" % (self.size, original_size)
+                logger.error("Corrupted file due to size. Size on record: %s, Size in header: %s", self.size, original_size)
                 return None
             iv = encrypted_data[:16]
             encrypted_data = encrypted_data[16:]
@@ -53,12 +58,13 @@ class MistFile(object):
 
             data = decryptor.decrypt(encrypted_data)[:original_size]
             if self.size != len(data):
-                print "Corrupted file due to size. Size on record: %s, Actual size: %s" % (self.size, len(data))
+                logger.error("Corrupted file due to size. Size on record: %s, Actual size: %s", self.size, len(data))
                 return None
             else:
                 return data
         else:
-            print "File is invalid."
+            logger.error("File is invalid.")
+            return None
 
     def Delete(self):
         if self.uid:

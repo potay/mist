@@ -2,9 +2,14 @@ import uuid
 import random
 import struct
 import os
+import logging
 from Crypto.Cipher import AES
 
 import settings
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class MistChunk(object):
@@ -43,17 +48,17 @@ class MistChunk(object):
             with open(self.chunk_path, "rb") as infile:
                 file_uid = uuid.UUID(bytes_le=infile.read(16))
                 if file_uid != self.file_uid:
-                    print "ERROR", uuid
+                    logger.error("UID: %s", uuid)
                     return
 
                 uid = uuid.UUID(bytes_le=infile.read(16))
                 if uid != self.uid:
-                    print "ERROR", uuid
+                    logger.error("UID: %s", uuid)
                     return
 
                 original_size = struct.unpack("<Q", infile.read(struct.calcsize("Q")))[0]
                 if self.size != original_size:
-                    print "ERROR: Corrupted file due to filesize."
+                    logger.error("Corrupted file due to filesize. UID: %s", uuid)
                     return
                 iv = infile.read(16)
                 decryptor = AES.new(settings.ENCRYPTION_KEY, AES.MODE_CBC, iv)
@@ -61,7 +66,7 @@ class MistChunk(object):
 
             return decryptor.decrypt(encrypted_data)[:original_size]
         else:
-            print "Chunk is invalid."
+            logger.error("Chunk is invalid.")
 
     def Delete(self):
         os.remove(self.chunk_path)
